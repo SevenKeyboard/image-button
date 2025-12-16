@@ -206,7 +206,7 @@ Class ImageButton {
    ; ===================================================================================================================
    ; PUBLIC METHODS ====================================================================================================
    ; ===================================================================================================================
-   Create(HWND, FontFamily:=0, Options*) {
+   Create(HWND, FontFamily := 0, Options*) {
       ; Windows constants
       Static BCM_GETIMAGELIST := 0x1603, BCM_SETIMAGELIST := 0x1602
            , BS_CHECKBOX := 0x02, BS_RADIOBUTTON := 0x04, BS_GROUPBOX := 0x07, BS_AUTORADIOBUTTON := 0x09
