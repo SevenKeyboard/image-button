@@ -13,7 +13,7 @@
 ;   - Generates per-state button bitmaps (normal/hot/pressed/disabled/defaulted/stylushot)
 ;     and assigns them via BCM_SETIMAGELIST.
 ;   - Options support solid/bi-color/gradient/raised styles, ARGB or HTML color names,
-;     rounded corners, borders, and HICON/HBITMAP/file images.
+;     rounded corners, borders, edge overlays, and HICON/HBITMAP/file images.
 ;
 ; Example Usage:
 ;   1) Create a push button with its HWND (use the "hwnd" option).
@@ -24,7 +24,7 @@ class VersionManager_ImageButton
    static _ := VersionManager_ImageButton._init()
    _init()    {
       global
-      IMAGEBUTTON_VERSION := "1.0.0"
+      IMAGEBUTTON_VERSION := "1.1.0"
    }
 }
 ; ======================================================================================================================
@@ -32,7 +32,8 @@ class VersionManager_ImageButton
 ; Function:          Create images and assign them to pushbuttons.
 ; Tested with:       AHK 1.1.33.02 (A32/U32/U64)
 ; Tested on:         Win 10 (x64)
-; Change history:    1.5.00.00/2020-12-16/just me - increased script performance, added support for icons (HICON)
+; Change history:    1.1.0/2026-07-18/SevenKeyboard Ltd. - added optional edge overlays
+;                    1.5.00.00/2020-12-16/just me - increased script performance, added support for icons (HICON)
 ;                    1.4.00.00/2014-06-07/just me - fixed bug for button caption = "0", "000", etc.
 ;                    1.3.00.00/2014-02-28/just me - added support for ARGB colors
 ;                    1.2.00.00/2014-02-23/just me - added borders
@@ -58,7 +59,8 @@ class VersionManager_ImageButton
 ;        ---------------------------------------------------------------------------------------------------------------
 ;        Each option array may contain the following values:
 ;           Index Value
-;           1     Mode        mandatory:
+;           1     Mode        mandatory. The low nibble specifies one of the modes below. Bit 0x10 may be ORed with
+;                             the mode to draw an edge overlay after the background and before the caption:
 ;                             0  -  unicolored or bitmap
 ;                             1  -  vertical bicolored
 ;                             2  -  horizontal bicolored
@@ -70,7 +72,8 @@ class VersionManager_ImageButton
 ;           2     StartColor  mandatory for Option[1], higher indices will inherit the value of Option[1], if omitted:
 ;                             -  ARGB integer value (0xAARRGGBB) or HTML color name ("Red").
 ;                             -  Path of an image file or HBITMAP handle for mode 0.
-;           3     TargetColor mandatory for Option[1] if Mode > 0. Higher indcices will inherit the color of Option[1],
+;           3     TargetColor mandatory for Option[1] if the base Mode > 0. Higher indcices will inherit the color of
+;                             Option[1],
 ;                             if omitted:
 ;                             -  ARGB integer value (0xAARRGGBB) or HTML color name ("Red").
 ;                             -  String "HICON" if StartColor contains a HICON handle.
@@ -89,6 +92,12 @@ class VersionManager_ImageButton
 ;                             -  RGB integer value (0xRRGGBB) or HTML color name ("Red").
 ;           8     BorderWidth optional, ignored for modes 0 (bitmap) and 7, width of the border in pixels:
 ;                             -  Default: 1
+;           9     EdgeColor   mandatory if Mode contains the 0x10 edge flag, otherwise ignored:
+;                             -  ARGB integer value (0xAARRGGBB) or HTML color name ("Red").
+;           10    EdgeWidth   mandatory if Mode contains the 0x10 edge flag, otherwise ignored:
+;                             -  Width in pixels. Must be a positive integer.
+;           11    EdgeSide    mandatory if Mode contains the 0x10 edge flag, otherwise ignored:
+;                             -  0 = left, 1 = right, 2 = top, 3 = bottom.
 ;        ---------------------------------------------------------------------------------------------------------------
 ;        If the the button has a caption it will be drawn above the bitmap.
 ; Credits:           THX tic     for GDIP.AHK     : http://www.autohotkey.com/forum/post-198949.html
@@ -107,13 +116,20 @@ Class ImageButton {
    Static DefGuiColor  := ""        ; default GUI color                             (read/write)
    Static DefTxtColor := "Black"    ; default caption color                         (read/write)
    Static LastError := ""           ; will contain the last error message, if any   (readonly)
+   Static ModeMask := 0x0F
+   Static EdgeFlag := 0x10
+   Static EdgeLeft := 0
+   Static EdgeRight := 1
+   Static EdgeTop := 2
+   Static EdgeBottom := 3
    ; ===================================================================================================================
    ; PRIVATE PROPERTIES ================================================================================================
    ; ===================================================================================================================
    Static BitMaps := []
    Static GDIPDll := 0
    Static GDIPToken := 0
-   Static MaxOptions := 8
+   Static MaxStates := 8
+   Static MaxOptionFields := 11
    ; HTML colors
    Static HTML := {BLACK: 0x000000, GRAY: 0x808080, SILVER: 0xC0C0C0, WHITE: 0xFFFFFF, MAROON: 0x800000
                  , PURPLE: 0x800080, FUCHSIA: 0xFF00FF, RED: 0xFF0000, GREEN: 0x008000, OLIVE: 0x808000
@@ -174,6 +190,39 @@ Class ImageButton {
       Return DllCall("Gdiplus.dll\GdipClosePathFigure", "Ptr", Path)
    }
    ; ===================================================================================================================
+   DrawEdge(Graphics, Path, X, Y, W, H, Color, Width, Side) {
+      If (Side = This.EdgeLeft) {
+         EdgeW := Width > W ? W : Width
+         EdgeH := H
+         EdgeX := X
+         EdgeY := Y
+      }
+      Else If (Side = This.EdgeRight) {
+         EdgeW := Width > W ? W : Width
+         EdgeH := H
+         EdgeX := X + W - EdgeW
+         EdgeY := Y
+      }
+      Else If (Side = This.EdgeTop) {
+         EdgeW := W
+         EdgeH := Width > H ? H : Width
+         EdgeX := X
+         EdgeY := Y
+      }
+      Else {
+         EdgeW := W
+         EdgeH := Width > H ? H : Width
+         EdgeX := X
+         EdgeY := Y + H - EdgeH
+      }
+      DllCall("Gdiplus.dll\GdipSetClipPath", "Ptr", Graphics, "Ptr", Path, "Int", 0)
+      DllCall("Gdiplus.dll\GdipCreateSolidFill", "UInt", Color, "PtrP", Brush)
+      DllCall("Gdiplus.dll\GdipFillRectangle", "Ptr", Graphics, "Ptr", Brush
+            , "Float", EdgeX, "Float", EdgeY, "Float", EdgeW, "Float", EdgeH)
+      DllCall("Gdiplus.dll\GdipDeleteBrush", "Ptr", Brush)
+      DllCall("Gdiplus.dll\GdipResetClip", "Ptr", Graphics)
+   }
+   ; ===================================================================================================================
    SetRect(ByRef Rect, X1, Y1, X2, Y2) {
       VarSetCapacity(Rect, 16, 0)
       NumPut(X1, Rect, 0, "Int"), NumPut(Y1, Rect, 4, "Int")
@@ -229,7 +278,7 @@ Class ImageButton {
          Return This.SetError("Invalid parameter HWND!")
       ; ----------------------------------------------------------------------------------------------------------------
       ; Check Options
-      If !(IsObject(Options)) || (Options.MinIndex() <> 1) || (Options.MaxIndex() > This.MaxOptions)
+      If !(IsObject(Options)) || (Options.MinIndex() <> 1) || (Options.MaxIndex() > This.MaxStates)
          Return This.SetError("Invalid parameter Options!")
       ; ----------------------------------------------------------------------------------------------------------------
       ; Get and check control's class and styles
@@ -301,17 +350,23 @@ Class ImageButton {
          If !IsObject(Opt)
             Continue
          BkgColor1 := BkgColor2 := TxtColor := Mode := Rounded := GuiColor := Image := ""
+         RawMode := Flags := HasEdge := EdgeColor := EdgeWidth := EdgeSide := ""
          ; Replace omitted options with the values of Options.1
-         Loop, % This.MaxOptions {
+         Loop, % This.MaxOptionFields {
             If (Opt[A_Index] = "")
                Opt[A_Index] := Options[1, A_Index]
          }
          ; -------------------------------------------------------------------------------------------------------------
          ; Check option values
          ; Mode
-         Mode := SubStr(Opt[1], 1 ,1)
-         If !InStr("0123456789", Mode)
+         RawMode := Opt[1]
+         If !This.IsInt(RawMode) || (RawMode < 0)
             Return This.SetError("Invalid value for Mode in Options[" . Idx . "]!")
+         Mode := RawMode & This.ModeMask
+         Flags := RawMode & ~(This.ModeMask)
+         If (Mode > 7) || (Flags & ~(This.EdgeFlag))
+            Return This.SetError("Invalid value for Mode in Options[" . Idx . "]!")
+         HasEdge := (Flags & This.EdgeFlag) <> 0
          ; StartColor & TargetColor
          If (Mode = 0) && This.BitmapOrIcon(Opt[2], Opt[3])
             Image := Opt[2]
@@ -354,6 +409,18 @@ Class ImageButton {
          }
          ; BorderWidth
          BorderWidth := Opt[8] ? Opt[8] : 1
+         ; Edge overlay
+         If HasEdge {
+            If (Opt[9] = "") || (!This.IsInt(Opt[9]) && !This.HTML.HasKey(Opt[9]))
+               Return This.SetError("Invalid value for EdgeColor in Options[" . Idx . "]!")
+            EdgeColor := This.GetARGB(Opt[9])
+            If !This.IsInt(Opt[10]) || (Opt[10] <= 0)
+               Return This.SetError("Invalid value for EdgeWidth in Options[" . Idx . "]!")
+            EdgeWidth := Opt[10]
+            If !This.IsInt(Opt[11]) || (Opt[11] < This.EdgeLeft) || (Opt[11] > This.EdgeBottom)
+               Return This.SetError("Invalid value for EdgeSide in Options[" . Idx . "]!")
+            EdgeSide := Opt[11]
+         }
          ; -------------------------------------------------------------------------------------------------------------
          ; Clear the background
          DllCall("Gdiplus.dll\GdipGraphicsClear", "Ptr", PGRAPHICS, "UInt", GuiColor)
@@ -439,8 +506,10 @@ Class ImageButton {
                ; Fill the path
                DllCall("Gdiplus.dll\GdipFillPath", "Ptr", PGRAPHICS, "Ptr", PBRUSH, "Ptr", PPATH)
             }
-            ; Free resources
+            ; Draw the optional edge over the background and inside the border/path
             DllCall("Gdiplus.dll\GdipDeleteBrush", "Ptr", PBRUSH)
+            If HasEdge
+               This.DrawEdge(PGRAPHICS, PPATH, PathX, PathY, PathW, PathH, EdgeColor, EdgeWidth, EdgeSide)
             DllCall("Gdiplus.dll\GdipDeletePath", "Ptr", PPATH)
          } Else { ; Create a bitmap from HBITMAP or file
             If This.IsInt(Image)
@@ -455,6 +524,16 @@ Class ImageButton {
                   , "Int", BtnW, "Int", BtnH)
             ; Free the bitmap
             DllCall("Gdiplus.dll\GdipDisposeImage", "Ptr", PBM)
+            ; Draw the optional edge over the bitmap
+            If HasEdge {
+               DllCall("Gdiplus.dll\GdipCreatePath", "UInt", 0, "PtrP", PPATH)
+               If (Rounded < 1)
+                  This.PathAddRectangle(PPATH, 0, 0, BtnW, BtnH)
+               Else
+                  This.PathAddRoundedRect(PPATH, 0, 0, BtnW, BtnH, Rounded)
+               This.DrawEdge(PGRAPHICS, PPATH, 0, 0, BtnW, BtnH, EdgeColor, EdgeWidth, EdgeSide)
+               DllCall("Gdiplus.dll\GdipDeletePath", "Ptr", PPATH)
+            }
          }
          ; -------------------------------------------------------------------------------------------------------------
          ; Draw the caption
